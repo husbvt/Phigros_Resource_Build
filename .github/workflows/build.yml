@@ -2,48 +2,23 @@ name: Build Phigros Resources
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 * * * *"
+  push:
+    branches: [ master ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Phigros-history
-        uses: actions/checkout@v4
-        with:
-          repository: SteveZMTstudios/Phigros-history
-          path: history
-
-      - name: Install p7zip
-        run: sudo apt-get update && sudo apt-get install -y p7zip-full
-
-      - name: Extract & Prepare APK
-        run: |
-          cd history
-          shopt -s nullglob
-          for f in *.7z.001; do
-            echo "Extracting $f"
-            7z x "$f"
-          done
-
-          APK=$(find . -name "*.apk" | head -n 1)
-          if [ -z "$APK" ]; then
-            echo "❌ APK not found"
-            exit 1
-          fi
-
-          echo "Found APK: $APK"
-          cp "$APK" Phigros.apk
-
       - name: Checkout Phigros_Resource1
         uses: actions/checkout@v4
-        with:
-          path: resource
 
-      - name: Update APK
-        run: cp history/Phigros.apk resource/Phigros.apk
+      - name: Check APK
+        run: |
+          if [ ! -f Phigros.apk ]; then
+            echo "❌ Phigros.apk missing"
+            exit 1
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -51,12 +26,10 @@ jobs:
           python-version: "3.10"
 
       - name: Clean old outputs
-        working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
       - name: Run resources.py
-        working-directory: resource
         run: python resources.py
 
       - name: Checkout build repo
@@ -70,12 +43,12 @@ jobs:
       - name: Publish resources
         run: |
           rsync -av --delete \
-            resource/avatar \
-            resource/chart \
-            resource/illustration \
-            resource/illustrationBlur \
-            resource/illustrationLowRes \
-            resource/music \
+            avatar \
+            chart \
+            illustration \
+            illustrationBlur \
+            illustrationLowRes \
+            music \
             build/
 
       - name: Commit & Push
@@ -84,9 +57,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions@users.noreply.github.com"
           git add .
-          if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -m "auto update"
-            git push origin master
-          fi
+          git commit -m "auto update" || true
+          git push origin master
