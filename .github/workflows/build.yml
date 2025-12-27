@@ -1,0 +1,98 @@
+name: Build Phigros Resources
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"   # 每小时自动运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 拉取上游 Phigros-history
+      - name: Checkout Phigros-history
+        uses: actions/checkout@v4
+        with:
+          repository: SteveZMTstudios/Phigros-history
+          path: history
+
+      # 2. 安装 7z
+      - name: Install p7zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      # 3. 解压 7z 并准备 APK
+      - name: Extract & Prepare APK
+        run: |
+          cd history
+          for f in *.7z; do
+            7z x "$f"
+          done
+          APK=$(find . -name "*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "APK not found"
+            exit 1
+          fi
+          cp "$APK" Phigros.apk
+
+      # 4. Checkout 当前资源仓库
+      - name: Checkout Phigros_Resource1
+        uses: actions/checkout@v4
+        with:
+          path: resource
+
+      # 5. 同步 APK
+      - name: Update APK
+        run: cp history/Phigros.apk resource/Phigros.apk
+
+      # 6. Python 环境
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # 7. 清理旧资源
+      - name: Clean old outputs
+        working-directory: resource
+        run: |
+          rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
+
+      # 8. 运行 resources.py
+      - name: Run resources.py
+        working-directory: resource
+        run: python resources.py
+
+      # 9. Checkout 构建仓库（master 分支）
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.BUILD_REPO }}
+          token: ${{ secrets.BUILD_PAT }}
+          ref: master
+          path: build
+
+      # 10. 同步构建结果
+      - name: Publish resources
+        run: |
+          rsync -av --delete \
+            resource/avatar \
+            resource/chart \
+            resource/illustration \
+            resource/illustrationBlur \
+            resource/illustrationLowRes \
+            resource/music \
+            build/
+
+      # 11. 提交并推送
+      - name: Commit & Push
+        working-directory: build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "auto update"
+            git push origin master
+          fi
