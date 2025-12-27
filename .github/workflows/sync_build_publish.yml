@@ -1,0 +1,116 @@
+name: Sync → Build → Publish Phigros Resources
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"   # 每小时自动检查上游更新
+  push:
+    branches: [ main ]   # 本仓库更新也会触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ========== 1️⃣ 同步上游 Phigros-history ==========
+      - name: Checkout Phigros-history
+        uses: actions/checkout@v4
+        with:
+          repository: SteveZMTstudios/Phigros-history
+          path: history
+
+      # ========== 2️⃣ 安装 7z ==========
+      - name: Install p7zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      # ========== 3️⃣ 解压 7z 分卷 ==========
+      - name: Extract 7z archives
+        run: |
+          cd history
+          shopt -s nullglob
+          for f in *.7z; do
+            echo "Extracting $f"
+            7z x "$f"
+          done
+
+      # ========== 4️⃣ 查找并复制 APK ==========
+      - name: Prepare Phigros.apk
+        run: |
+          cd history
+          APK=$(find . -name "*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "❌ APK not found"
+            exit 1
+          fi
+          echo "Found APK: $APK"
+          cp "$APK" Phigros.apk
+
+      # ========== 5️⃣ Checkout 主资源仓库 ==========
+      - name: Checkout Phigros_Resource1
+        uses: actions/checkout@v4
+        with:
+          path: resource
+
+      # ========== 6️⃣ 同步 APK 到资源仓库 ==========
+      - name: Update APK
+        run: |
+          cp history/Phigros.apk resource/Phigros.apk
+
+      # ========== 7️⃣ Python 环境 ==========
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # ========== 8️⃣ 安装依赖（如存在） ==========
+      - name: Install Python dependencies
+        working-directory: resource
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      # ========== 9️⃣ 清理旧构建结果 ==========
+      - name: Clean old outputs
+        working-directory: resource
+        run: |
+          rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
+
+      # ========== 🔟 运行 resources.py ==========
+      - name: Run resources.py
+        working-directory: resource
+        run: python resources.py
+
+      # ========== 1️⃣1️⃣ Checkout 构建分仓库 ==========
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.BUILD_REPO }}
+          token: ${{ secrets.BUILD_PAT }}
+          path: build
+
+      # ========== 1️⃣2️⃣ 同步构建产物 ==========
+      - name: Publish resources
+        run: |
+          rsync -av --delete \
+            resource/avatar \
+            resource/chart \
+            resource/illustration \
+            resource/illustrationBlur \
+            resource/illustrationLowRes \
+            resource/music \
+            build/
+
+      # ========== 1️⃣3️⃣ 提交并推送 ==========
+      - name: Commit & Push build repo
+        working-directory: build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "✅ No changes to publish"
+          else
+            git commit -m "Auto build $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin ${{ secrets.BUILD_BRANCH }}
+          fi
